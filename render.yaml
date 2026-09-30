@@ -5,21 +5,17 @@ services:
     plan: starter
     rootDir: log-analyzer-agent
     buildCommand: pip install -r requeriments.txt
-    startCommand: gunicorn --bind 0.0.0.0:$PORT api:app
+    startCommand: gunicorn --bind 0.0.0.0:$PORT api_optimized:app
     healthCheckPath: /api/health
     envVars:
       - key: OLLAMA_API_URL
+        value: https://api.ollama.com
+      - key: OLLAMA_API_KEY
         sync: false
       - key: OLLAMA_MODEL
-        value: phi:2.7b
-      - key: OLLAMA_TIMEOUT
-        value: 30
-      - key: SERVICENOW_INSTANCE
-        sync: false
-      - key: SERVICENOW_CLIENT_ID
-        sync: false
-      - key: SERVICENOW_CLIENT_SECRET
-        sync: false
+        value: llama3.2:1b:cloud
+      - key: ENABLE_STREAMING
+        value: true
       - key: SERVICENOW_CREATE_INCIDENTS
         value: false
       - key: LOG_LEVEL
