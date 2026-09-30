@@ -1,0 +1,209 @@
+# ==============================================
+# Docker Compose para Log Analyzer Completo
+# Incluye: OLLAMA + Agent + API + Gateway
+# ==============================================
+
+services:
+  # ==============================================
+  # OLLAMA - Local Language Model Server
+  # ==============================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: log-analyzer-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_NUM_GPU=${OLLAMA_NUM_GPU:-1}
+      - OLLAMA_NUM_THREAD=${OLLAMA_NUM_THREAD:-8}
+    volumes:
+      - ollama-data:/root/.ollama
+      - ./log-analyzer-agent/ollama/safety-rules.txt:/root/.ollama/safety-rules.txt:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - log-analyzer-network
+    command: serve
+
+  # ==============================================
+  # Log Analyzer Agent + REST API
+  # Compilado desde ./log-analyzer-agent/Dockerfile
+  # ==============================================
+  log-analyzer-agent:
+    build:
+      context: ./log-analyzer-agent
+      dockerfile: Dockerfile
+      args:
+        - PYTHON_VERSION=3.11
+    image: log-analyzer-agent:latest
+    container_name: log-analyzer-agent
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      # Flask Configuration
+      - FLASK_ENV=production
+      - FLASK_APP=api_optimized.py
+      - PORT=5000
+      
+      # OLLAMA Configuration
+      - OLLAMA_API_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama2}
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-30}
+      
+      # ServiceNow Integration (Opcional)
+      - SERVICENOW_INSTANCE=${SERVICENOW_INSTANCE:-}
+      - SERVICENOW_CLIENT_ID=${SERVICENOW_CLIENT_ID:-}
+      - SERVICENOW_CLIENT_SECRET=${SERVICENOW_CLIENT_SECRET:-}
+      - SERVICENOW_CREATE_INCIDENTS=${SERVICENOW_CREATE_INCIDENTS:-false}
+      
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    
+    depends_on:
+      ollama:
+        condition: service_healthy
+    
+    volumes:
+      # Volumen para logs persistentes
+      - ./log-analyzer-agent/logs:/app/logs
+      # Volumen para cache de respuestas (opcional)
+      - agent-cache:/app/.cache
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    networks:
+      - log-analyzer-network
+    
+    # Limitar recursos (opcional, ajustar según tu hardware)
+    deploy:
+      resources:
+        limits:
+          cpus: '${AGENT_CPU_LIMIT:-2}'
+          memory: ${AGENT_MEMORY_LIMIT:-2G}
+        reservations:
+          cpus: '${AGENT_CPU_RESERVE:-1}'
+          memory: ${AGENT_MEMORY_RESERVE:-1G}
+
+  # ==============================================
+  # Orchestrator API
+  # Classifies requests and dispatches trace analysis to the agent above
+  # ==============================================
+  orchestrator:
+    build:
+      context: ./log-analyzer-agent
+      dockerfile: Dockerfile
+    image: log-analyzer-agent:latest
+    container_name: log-analyzer-orchestrator
+    restart: unless-stopped
+    command: ["python", "-u", "orchestrator_api.py"]
+    ports:
+      - "5001:5001"
+    env_file:
+      - ./log-analyzer-agent/.env.production
+    environment:
+      - ORCHESTRATOR_PORT=5001
+      - TRACE_AGENT_URL=http://log-analyzer-agent:5000
+      - ORCHESTRATOR_OLLAMA_TIMEOUT=${ORCHESTRATOR_OLLAMA_TIMEOUT:-60}
+      - TRACE_AGENT_TIMEOUT=${TRACE_AGENT_TIMEOUT:-900}
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      log-analyzer-agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - log-analyzer-network
+
+  # ==============================================
+  # Mulesoft Omni Gateway (Optional)
+  # Descomentar si se va a usar como API Gateway
+  # ==============================================
+  # mule-gateway:
+  #   image: mulesoft/mule-runtime:4.11.6
+  #   container_name: log-analyzer-mule-gateway
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8081:8081"
+  #   environment:
+  #     - JAVA_HOME=/opt/java/openjdk
+  #     - MULE_HOME=/opt/mule
+  #     - LOG_LEVEL=${MULE_LOG_LEVEL:-INFO}
+  #     - AGENT_HOST=log-analyzer-agent
+  #     - AGENT_PORT=5000
+  #   depends_on:
+  #     - log-analyzer-agent
+  #   volumes:
+  #     - ./log-analyzer-omni-gateway/target:/opt/mule/apps
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8081/api/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #   networks:
+  #     - log-analyzer-network
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '2'
+  #         memory: 2G
+
+  # ==============================================
+  # ServiceNow Mock (Para Testing - Descomenta para dev)
+  # ==============================================
+  # servicenow-mock:
+  #   image: mockserver/mockserver:latest
+  #   container_name: servicenow-mock
+  #   restart: unless-stopped
+  #   ports:
+  #     - "1080:1080"
+  #   environment:
+  #     - MOCKSERVER_PROPERTY_FILE=/config/mockserver-init.properties
+  #   volumes:
+  #     - ./docker/mockserver/:/config
+  #   networks:
+  #     - log-analyzer-network
+  #   profiles:
+  #     - dev
+
+# ==============================================
+# Networks
+# ==============================================
+networks:
+  log-analyzer-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1450
+
+# ==============================================
+# Volumes
+# ==============================================
+volumes:
+  ollama-data:
+    driver: local
+    driver_opts:
+      type: local
+      o: bind
+      device: ${OLLAMA_DATA_PATH:-./data/ollama}
+  
+  agent-cache:
+    driver: local
+    driver_opts:
+      type: local
+      o: bind
+      device: ${AGENT_CACHE_PATH:-./data/agent-cache}

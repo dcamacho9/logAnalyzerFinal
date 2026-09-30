@@ -1,0 +1,94 @@
+{
+  "info": {
+    "name": "Agente Trazas Ollama - Orquestador",
+    "description": "Health check y prueba de enrutamiento del orquestador hacia el agente de análisis de trazas.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5001"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health - Orquestador",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/health",
+        "description": "Comprueba que la API del orquestador esté activa."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('El orquestador responde HTTP 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('La respuesta identifica al orquestador', function () {",
+              "    var body = pm.response.json();",
+              "    pm.expect(body.status).to.eql('OK');",
+              "    pm.expect(body.service).to.eql('Log Analyzer Orchestrator');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "Orquestar - Análisis de trazas",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"task\": \"Analiza estas trazas y encuentra la causa del error\",\n  \"logs\": \"2026-09-29T10:00:00Z [ERROR] Database connection timeout\",\n  \"use_cache\": false\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/api/orchestrate",
+        "description": "Envía una solicitud al orquestador. La prueba espera que Ollama la enrute al agente de trazas y que este genere un diagnóstico."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('El análisis termina con HTTP 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('La tarea se enruta al agente de trazas', function () {",
+              "    var body = pm.response.json();",
+              "    pm.expect(body.status).to.eql('success');",
+              "    pm.expect(body.decision.agent).to.eql('log-analyzer-agent');",
+              "});",
+              "",
+              "pm.test('El agente devuelve un diagnóstico', function () {",
+              "    var body = pm.response.json();",
+              "    pm.expect(body.agent_result).to.be.an('object');",
+              "    pm.expect(body.agent_result.status).to.eql('success');",
+              "    pm.expect(body.agent_result.diagnostic_report).to.be.a('string').and.not.empty;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "response": []
+    }
+  ]
+}
